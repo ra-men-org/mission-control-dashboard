@@ -770,9 +770,18 @@ def feed_page(request: Request):
         elif source == 'session':
             title = item.get('preview', 'Chat session')[:60]
             detail = f"{item.get('message_count', 0)} messages"
+            session_id = item.get('id', '')
         else:
             title = str(item)[:50]
             detail = ""
+            session_id = ""
+        
+        # Make sessions clickable
+        if source == 'session' and session_id:
+            title_elem = A(title, href=f"/session?id={session_id}", 
+                          style="text-decoration: none; color: inherit; font-weight: 500;")
+        else:
+            title_elem = P(title, cls="font-medium mb-1")
         
         feed_items.append(
             Div(
@@ -781,7 +790,7 @@ def feed_page(request: Request):
                     Span(format_timestamp(ts), cls="timestamp ml-auto"),
                     cls="flex justify-between items-center mb-2"
                 ),
-                P(title, cls="font-medium mb-1"),
+                title_elem,
                 P(detail, cls="text-sm", style="color: var(--text-secondary);"),
                 cls="activity-item glass"
             )
@@ -805,6 +814,110 @@ def feed_page(request: Request):
     )
     
     return layout("Activity Feed", content, "feed", request)
+
+@rt('/session')
+def view_session(request: Request, id: str = ""):
+    if not id:
+        return RedirectResponse("/")
+    
+    # Find the session file
+    session_file = SESSIONS_DIR / f"{id}.jsonl"
+    if not session_file.exists():
+        # Try without extension
+        session_file = SESSIONS_DIR / id
+    
+    if not session_file.exists():
+        content = Div(
+            Div(
+                P("💬", cls="text-4xl mb-3"),
+                H2("Session Not Found", cls="text-xl font-bold mb-2"),
+                P(f"ID: {id}", style="color: var(--text-muted);"),
+                A("← Back to Feed", href="/", cls="nav-item mt-4 inline-block"),
+                cls="empty-state glass"
+            )
+        )
+    else:
+        try:
+            messages = []
+            with open(session_file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        msg = json.loads(line)
+                        if msg.get('type') == 'message':
+                            role = msg.get('message', {}).get('role', 'unknown')
+                            msg_content = ""
+                            
+                            # Extract text content
+                            content_parts = msg.get('message', {}).get('content', [])
+                            if isinstance(content_parts, list):
+                                for part in content_parts:
+                                    if isinstance(part, dict) and part.get('type') == 'text':
+                                        msg_content += part.get('text', '')
+                            elif isinstance(content_parts, str):
+                                msg_content = content_parts
+                            
+                            timestamp = msg.get('timestamp', '')
+                            
+                            if role == 'user':
+                                msg_class = "glass p-3 mb-3"
+                                msg_style = "border-left: 3px solid var(--accent); margin-left: 20%;"
+                                role_label = "👤 You"
+                            elif role == 'assistant':
+                                msg_class = "glass p-3 mb-3"
+                                msg_style = "border-left: 3px solid var(--success); margin-right: 20%;"
+                                role_label = "🦊 Assistant"
+                            else:
+                                msg_class = "glass p-3 mb-3"
+                                msg_style = "border-left: 3px solid var(--text-muted);"
+                                role_label = role.upper()
+                            
+                            # Truncate long messages
+                            display_content = msg_content[:1000] + "..." if len(msg_content) > 1000 else msg_content
+                            # Escape HTML
+                            display_content = display_content.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                            
+                            messages.append(
+                                Div(
+                                    Div(
+                                        Span(role_label, cls="text-xs font-semibold", 
+                                             style="color: var(--text-secondary);"),
+                                        Span(timestamp[:19] if timestamp else "", 
+                                             cls="timestamp ml-auto"),
+                                        cls="flex justify-between items-center mb-2"
+                                    ),
+                                    Pre(display_content, cls="text-sm", 
+                                        style="white-space: pre-wrap; font-family: inherit; color: var(--text-primary);"),
+                                    cls=msg_class,
+                                    style=msg_style
+                                )
+                            )
+                    except json.JSONDecodeError:
+                        continue
+            
+            content = Div(
+                Div(
+                    A("← Back to Feed", href="/", cls="nav-item mb-4 inline-block"),
+                    H2(f"Session: {id[:8]}...", cls="text-xl font-bold mb-2"),
+                    P(f"{len(messages)} messages", cls="text-sm mb-4", style="color: var(--text-muted);"),
+                    Div(*messages, cls="scroll-container"),
+                    cls="glass p-6"
+                )
+            )
+        except Exception as e:
+            content = Div(
+                Div(
+                    P("⚠️", cls="text-4xl mb-3"),
+                    H2("Error Loading Session", cls="text-xl font-bold mb-2"),
+                    P(str(e), style="color: var(--text-muted);"),
+                    A("← Back to Feed", href="/", cls="nav-item mt-4 inline-block"),
+                    cls="empty-state glass"
+                )
+            )
+    
+    return layout("Session View", content, "feed", request)
 
 @rt('/calendar')
 def calendar_page(request: Request):
