@@ -1230,50 +1230,277 @@ def view_session(request: Request, id: str = ""):
     return layout("Session View", content, "feed", request)
 
 @rt('/calendar')
-def calendar_page(request: Request):
-    upcoming = get_upcoming_tasks()
+def calendar_page(request: Request, view: str = "week", date: str = "") -> str:
+    """Calendar with week/day views"""
+    from datetime import datetime, timedelta
+    import calendar
     
-    if not upcoming:
-        schedule_content = Div(
-            Div(
-                P("📅", cls="text-4xl mb-3"),
-                P("No scheduled tasks.", cls="text-lg"),
-                cls="empty-state"
-            )
-        )
-    else:
-        rows = []
-        for task in upcoming:
-            next_run = task['next_run']
-            if isinstance(next_run, datetime):
-                next_run_str = next_run.strftime('%Y-%m-%d %H:%M:%S')
-                is_soon = (next_run - datetime.now()) < timedelta(hours=1)
-            else:
-                next_run_str = str(next_run)
-                is_soon = False
+    # Parse current date
+    try:
+        if date:
+            current_date = datetime.strptime(date, "%Y-%m-%d")
+        else:
+            current_date = datetime.now()
+    except:
+        current_date = datetime.now()
+    
+    # Get cron jobs as calendar events
+    cron_jobs = load_cron_jobs()
+    events = []
+    for job in cron_jobs:
+        schedule = job.get('schedule', {})
+        kind = schedule.get('kind')
+        if kind == 'cron':
+            state = job.get('state', {})
+            next_run_ms = state.get('nextRunAtMs')
+            if next_run_ms:
+                next_run = datetime.fromtimestamp(next_run_ms / 1000)
+                events.append({
+                    'title': job.get('name', 'Unnamed'),
+                    'datetime': next_run,
+                    'schedule': schedule.get('expr', ''),
+                    'enabled': job.get('enabled', True)
+                })
+    
+    # View toggle buttons
+    view_tabs = Div(
+        A("Week", href=f"/calendar?view=week&date={current_date.strftime('%Y-%m-%d')}", 
+          cls=f"tab {'active' if view == 'week' else ''}"),
+        A("Day", href=f"/calendar?view=day&date={current_date.strftime('%Y-%m-%d')}", 
+          cls=f"tab {'active' if view == 'day' else ''}"),
+        cls="tabs"
+    )
+    
+    # Navigation
+    if view == "week":
+        week_start = current_date - timedelta(days=current_date.weekday())
+        week_end = week_start + timedelta(days=6)
+        prev_date = week_start - timedelta(days=7)
+        next_date = week_start + timedelta(days=7)
+        nav_title = f"Week of {week_start.strftime('%b %d')} - {week_end.strftime('%b %d, %Y')}"
+    else:  # day view
+        prev_date = current_date - timedelta(days=1)
+        next_date = current_date + timedelta(days=1)
+        nav_title = current_date.strftime("%A, %B %d, %Y")
+    
+    nav_buttons = Div(
+        A("← Prev", href=f"/calendar?view={view}&date={prev_date.strftime('%Y-%m-%d')}", cls="btn-secondary"),
+        A("Today", href=f"/calendar?view={view}", cls="btn-primary mx-2"),
+        A("Next →", href=f"/calendar?view={view}&date={next_date.strftime('%Y-%m-%d')}", cls="btn-secondary"),
+        cls="flex items-center mb-4"
+    )
+    
+    # Calendar grid styles
+    calendar_styles = """
+    .calendar-grid {
+        display: grid;
+        gap: 8px;
+    }
+    .calendar-week {
+        grid-template-columns: repeat(7, 1fr);
+    }
+    .calendar-day {
+        grid-template-columns: 1fr;
+    }
+    .calendar-header {
+        text-align: center;
+        padding: 12px 8px;
+        font-weight: 600;
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+        border-bottom: 2px solid var(--border);
+    }
+    .calendar-day-cell {
+        min-height: 120px;
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 12px;
+        transition: all 0.2s ease;
+    }
+    .calendar-day-cell:hover {
+        background: rgba(255, 255, 255, 0.04);
+        border-color: rgba(255, 255, 255, 0.1);
+    }
+    .calendar-day-cell.today {
+        background: rgba(59, 130, 246, 0.1);
+        border-color: rgba(59, 130, 246, 0.3);
+    }
+    .calendar-day-cell.other-month {
+        opacity: 0.4;
+    }
+    .day-number {
+        font-weight: 600;
+        font-size: 0.9rem;
+        margin-bottom: 8px;
+        display: inline-block;
+        width: 28px;
+        height: 28px;
+        line-height: 28px;
+        text-align: center;
+        border-radius: 50%;
+    }
+    .day-number.today {
+        background: var(--accent);
+        color: white;
+    }
+    .calendar-event {
+        padding: 6px 10px;
+        border-radius: 8px;
+        font-size: 0.8rem;
+        margin-bottom: 6px;
+        background: rgba(59, 130, 246, 0.15);
+        border-left: 3px solid var(--accent);
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    .calendar-event:hover {
+        background: rgba(59, 130, 246, 0.25);
+    }
+    .calendar-event.disabled {
+        opacity: 0.5;
+        border-left-color: var(--text-muted);
+    }
+    .event-time {
+        font-size: 0.7rem;
+        color: var(--text-muted);
+        font-family: monospace;
+    }
+    .day-view-timeline {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        background: var(--border);
+        border-radius: 12px;
+        overflow: hidden;
+    }
+    .hour-slot {
+        display: flex;
+        background: rgba(20, 20, 30, 0.6);
+        min-height: 60px;
+    }
+    .hour-label {
+        width: 60px;
+        padding: 8px 12px;
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        font-family: monospace;
+        border-right: 1px solid var(--border);
+        text-align: right;
+    }
+    .hour-content {
+        flex: 1;
+        padding: 8px;
+        position: relative;
+    }
+    .day-event {
+        padding: 8px 12px;
+        border-radius: 8px;
+        font-size: 0.9rem;
+        background: rgba(59, 130, 246, 0.15);
+        border-left: 3px solid var(--accent);
+        margin-bottom: 4px;
+    }
+    .day-event .event-schedule {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        margin-top: 4px;
+    }
+    """
+    
+    if view == "week":
+        # Build week view
+        week_start = current_date - timedelta(days=current_date.weekday())
+        days = []
+        headers = []
+        today = datetime.now().date()
+        
+        for i in range(7):
+            day_date = week_start + timedelta(days=i)
+            is_today = day_date.date() == today
             
-            rows.append(
+            headers.append(
                 Div(
-                    Div(
-                        H3(task['name'], cls="font-semibold"),
-                        Span(task['schedule'], cls="source-badge badge-cron text-xs"),
-                        cls="flex justify-between items-start mb-3"
-                    ),
-                    Div(
-                        Span("Next: ", style="color: var(--text-muted);"),
-                        Span(next_run_str, cls="font-mono ml-2", 
-                             style=f"color: {'var(--error)' if is_soon else 'var(--success)'};"),
-                        cls="text-sm"
-                    ),
-                    cls="glass p-4 mb-3 glass-hover"
+                    day_date.strftime("%a"),
+                    cls="calendar-header"
                 )
             )
-        schedule_content = Div(*rows)
+            
+            # Find events for this day
+            day_events = [e for e in events if e['datetime'].date() == day_date.date()]
+            day_events.sort(key=lambda x: x['datetime'])
+            
+            event_divs = []
+            for evt in day_events[:4]:  # Limit to 4 per day
+                event_divs.append(
+                    Div(
+                        Div(evt['title'], cls="font-medium"),
+                        Div(evt['datetime'].strftime("%H:%M"), cls="event-time"),
+                        cls=f"calendar-event{' disabled' if not evt['enabled'] else ''}"
+                    )
+                )
+            if len(day_events) > 4:
+                event_divs.append(P(f"+{len(day_events) - 4} more", cls="text-xs text-center", style="color: var(--text-muted);"))
+            
+            days.append(
+                Div(
+                    Div(
+                        Span(day_date.strftime("%d"), cls=f"day-number{' today' if is_today else ''}"),
+                        cls="mb-2"
+                    ),
+                    Div(*event_divs),
+                    cls=f"calendar-day-cell{' today' if is_today else ''}"
+                )
+            )
+        
+        calendar_content = Div(
+            Div(*headers, cls="calendar-grid calendar-week"),
+            Div(*days, cls="calendar-grid calendar-week mt-2"),
+            cls="mt-4"
+        )
+    
+    else:  # day view
+        # Build day timeline
+        day_events = [e for e in events if e['datetime'].date() == current_date.date()]
+        day_events.sort(key=lambda x: x['datetime'])
+        
+        hours = []
+        for hour in range(24):
+            hour_events = [e for e in day_events if e['datetime'].hour == hour]
+            event_divs = []
+            for evt in hour_events:
+                event_divs.append(
+                    Div(
+                        Div(evt['title'], cls="font-medium"),
+                        Div(evt['schedule'], cls="event-schedule"),
+                        cls="day-event"
+                    )
+                )
+            
+            hours.append(
+                Div(
+                    Div(f"{hour:02d}:00", cls="hour-label"),
+                    Div(*event_divs, cls="hour-content"),
+                    cls="hour-slot"
+                )
+            )
+        
+        calendar_content = Div(
+            Div(*hours, cls="day-view-timeline mt-4"),
+            style="max-height: 600px; overflow-y: auto;"
+        )
     
     content = Div(
+        Style(calendar_styles),
         Div(
-            H2("Upcoming Tasks", cls="text-xl font-bold mb-4"),
-            schedule_content,
+            Div(
+                H2("📅 Calendar", cls="text-xl font-bold"),
+                P(nav_title, cls="text-sm", style="color: var(--text-muted);"),
+                cls="mb-4"
+            ),
+            nav_buttons,
+            view_tabs,
+            calendar_content,
             cls="glass p-6"
         )
     )
