@@ -302,6 +302,124 @@ body {
 .tab.active {
     font-weight: 600;
 }
+
+/* Kanban Styles */
+.kanban-board {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+    min-height: 500px;
+}
+
+.kanban-column {
+    background: rgba(10, 10, 15, 0.6);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 16px;
+    min-height: 400px;
+}
+
+.kanban-column-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 2px solid var(--border);
+}
+
+.kanban-column-title {
+    font-weight: 600;
+    font-size: 0.95rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.kanban-column-count {
+    background: rgba(255, 255, 255, 0.1);
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.kanban-card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    margin-bottom: 10px;
+    cursor: grab;
+    transition: all 0.2s ease;
+}
+
+.kanban-card:hover {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.12);
+    transform: translateY(-2px);
+}
+
+.kanban-card.dragging {
+    opacity: 0.5;
+    cursor: grabbing;
+}
+
+.kanban-card-title {
+    font-weight: 500;
+    font-size: 0.95rem;
+    margin-bottom: 8px;
+    line-height: 1.4;
+}
+
+.kanban-card-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.kanban-card-agent {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.agent-lead { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+.agent-research { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+.agent-writing { background: rgba(236, 72, 153, 0.2); color: #f472b6; }
+.agent-product-owner { background: rgba(139, 92, 246, 0.2); color: #a78bfa; }
+
+.kanban-card-tag {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.kanban-card-project {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 8px;
+}
+
+.column-todo { border-top: 3px solid #64748b; }
+.column-in_progress { border-top: 3px solid #f59e0b; }
+.column-review { border-top: 3px solid #8b5cf6; }
+.column-done { border-top: 3px solid #10b981; }
+.column-blocked { border-top: 3px solid #ef4444; }
+
+.column-todo .kanban-column-header { border-bottom-color: #64748b; }
+.column-in_progress .kanban-column-header { border-bottom-color: #f59e0b; }
+.column-review .kanban-column-header { border-bottom-color: #8b5cf6; }
+.column-done .kanban-column-header { border-bottom-color: #10b981; }
+.column-blocked .kanban-column-header { border-bottom-color: #ef4444; }
 """
 
 # ==================== AUTH ====================
@@ -584,6 +702,197 @@ def get_all_stats() -> Dict:
     
     return stats
 
+# ==================== KANBAN DATA ACCESS ====================
+
+def parse_working_md() -> List[Dict]:
+    """Parse WORKING.md to get agent task statuses"""
+    working_file = WORKSPACE / "memory" / "WORKING.md"
+    tasks = []
+    
+    if not working_file.exists():
+        return tasks
+    
+    try:
+        with open(working_file, 'r') as f:
+            content = f.read()
+        
+        # Parse agent sections
+        agents = ['Lead', 'Research', 'Writing', 'Product Owner']
+        
+        for agent in agents:
+            agent_lower = agent.lower().replace(' ', '-')
+            
+            # Find the agent section
+            pattern = rf'## {agent} Tasks\s*\n(.*?)(?=## |\Z)'
+            match = re.search(pattern, content, re.DOTALL)
+            
+            if match:
+                section = match.group(1)
+                
+                # Extract status
+                status_match = re.search(r'\*\*Status:\*\*\s*(\w+)', section)
+                status = status_match.group(1).lower() if status_match else 'idle'
+                
+                # Extract current task
+                current_match = re.search(r'\*\*Current:\*\*\s*(.+?)\n', section)
+                current_task = current_match.group(1).strip() if current_match else None
+                
+                # Extract next task
+                next_match = re.search(r'\*\*Next:\*\*\s*(.+?)\n', section)
+                next_task = next_match.group(1).strip() if next_match else None
+                
+                if current_task and current_task.lower() not in ['none', 'idle', 'n/a']:
+                    tasks.append({
+                        'id': f"{agent_lower}-current",
+                        'title': current_task,
+                        'agent': agent_lower,
+                        'status': 'in_progress' if status == 'in_progress' else status,
+                        'column': 'in_progress' if status == 'in_progress' else status,
+                        'source': 'WORKING.md',
+                        'type': 'agent-task'
+                    })
+                
+                if next_task and next_task.lower() not in ['none', 'idle', 'n/a', 'available for assignment from gtd']:
+                    tasks.append({
+                        'id': f"{agent_lower}-next",
+                        'title': next_task,
+                        'agent': agent_lower,
+                        'status': 'todo',
+                        'column': 'todo',
+                        'source': 'WORKING.md',
+                        'type': 'agent-task'
+                    })
+                
+                # Check for blocked section
+                blocked_match = re.search(r'## Blocked\s*\n(.*?)(?=## |\Z)', content, re.DOTALL)
+                if blocked_match:
+                    blocked_section = blocked_match.group(1)
+                    blocked_items = [line.strip('- ').strip() for line in blocked_section.split('\n') 
+                                   if line.strip().startswith('- ') and line.strip() != '-']
+                    
+                    for item in blocked_items:
+                        if item and item.lower() != '_none_':
+                            tasks.append({
+                                'id': f"blocked-{hash(item) % 10000}",
+                                'title': item,
+                                'agent': agent_lower,
+                                'status': 'blocked',
+                                'column': 'blocked',
+                                'source': 'WORKING.md',
+                                'type': 'agent-task'
+                            })
+    except Exception as e:
+        print(f"Error parsing WORKING.md: {e}")
+    
+    return tasks
+
+def parse_gtd_tasks() -> List[Dict]:
+    """Parse GTD next.md for actionable tasks"""
+    tasks = []
+    next_file = GTD_DIR / "01-Next-Actions" / "next.md"
+    
+    if not next_file.exists():
+        return tasks
+    
+    try:
+        with open(next_file, 'r') as f:
+            content = f.read()
+        
+        # Map contexts to agents
+        agent_map = {
+            '@research': 'research',
+            '@writing': 'writing',
+            '@product-owner': 'product-owner',
+            '@computer': 'lead',
+            '@calls': 'lead',
+        }
+        
+        # Find tasks (both checked and unchecked)
+        task_pattern = r'- \[(.)\] (.+?)(?=@|\n|$)'
+        
+        for match in re.finditer(task_pattern, content):
+            checked = match.group(1) == 'x'
+            task_text = match.group(2).strip()
+            
+            # Find agent tag
+            agent = 'lead'  # default
+            for tag, mapped_agent in agent_map.items():
+                if tag in task_text.lower():
+                    agent = mapped_agent
+                    break
+            
+            # Extract project tag if present
+            project_match = re.search(r'#(\w+)', task_text)
+            project = project_match.group(1) if project_match else None
+            
+            # Clean task text
+            clean_text = re.sub(r'@\w+', '', task_text)
+            clean_text = re.sub(r'#\w+', '', clean_text)
+            clean_text = clean_text.strip()
+            
+            if clean_text:
+                tasks.append({
+                    'id': f"gtd-{hash(task_text) % 10000}",
+                    'title': clean_text,
+                    'agent': agent,
+                    'status': 'done' if checked else 'todo',
+                    'column': 'done' if checked else 'todo',
+                    'source': 'GTD',
+                    'project': project,
+                    'type': 'gtd-task'
+                })
+    except Exception as e:
+        print(f"Error parsing GTD: {e}")
+    
+    return tasks
+
+def load_kanban_tasks() -> Dict[str, List[Dict]]:
+    """Load all tasks organized by kanban column"""
+    columns = {
+        'todo': [],
+        'in_progress': [],
+        'review': [],
+        'done': [],
+        'blocked': []
+    }
+    
+    # Get tasks from WORKING.md
+    working_tasks = parse_working_md()
+    for task in working_tasks:
+        col = task.get('column', 'todo')
+        if col in columns:
+            columns[col].append(task)
+    
+    # Get tasks from GTD
+    gtd_tasks = parse_gtd_tasks()
+    for task in gtd_tasks:
+        col = task.get('column', 'todo')
+        if col in columns:
+            columns[col].append(task)
+    
+    # Deduplicate by title
+    seen = set()
+    for col in columns:
+        unique = []
+        for task in columns[col]:
+            key = task['title'].lower()
+            if key not in seen:
+                seen.add(key)
+                unique.append(task)
+        columns[col] = unique
+    
+    return columns
+
+def get_agent_emoji(agent: str) -> str:
+    """Get emoji for agent type"""
+    emojis = {
+        'lead': '👑',
+        'research': '🔬',
+        'writing': '✍️',
+        'product-owner': '📋',
+    }
+    return emojis.get(agent, '🤖')
+
 # ==================== UI HELPERS ====================
 
 def format_timestamp(ts) -> str:
@@ -638,6 +947,7 @@ def layout(title, content, active_tab, request: Request):
     mc_nav = [
         nav_link("📊 Feed", "/", active_tab == "feed"),
         nav_link("📅 Calendar", "/calendar", active_tab == "calendar"),
+        nav_link("🗂️ Kanban", "/kanban", active_tab == "kanban"),
     ]
     
     memory_nav = [
@@ -1398,6 +1708,81 @@ def stats_page(request: Request):
     )
     
     return layout("Statistics", content, "stats", request)
+
+@rt('/kanban')
+def kanban_page(request: Request):
+    """Kanban board for agent tasks"""
+    columns = load_kanban_tasks()
+    
+    column_config = [
+        ('todo', '⏳ To Do', 'column-todo'),
+        ('in_progress', '🔄 In Progress', 'column-in_progress'),
+        ('review', '👀 Review', 'column-review'),
+        ('done', '✅ Done', 'column-done'),
+        ('blocked', '🚫 Blocked', 'column-blocked'),
+    ]
+    
+    kanban_columns = []
+    
+    for col_id, col_title, col_class in column_config:
+        tasks = columns.get(col_id, [])
+        
+        task_cards = []
+        for task in tasks:
+            agent = task.get('agent', 'lead')
+            project = task.get('project')
+            task_type = task.get('type', 'task')
+            
+            meta_items = [
+                Span(f"{get_agent_emoji(agent)} {agent.replace('-', ' ').title()}", 
+                     cls=f"kanban-card-agent agent-{agent}")
+            ]
+            
+            if project:
+                meta_items.append(Span(f"#{project}", cls="kanban-card-tag", 
+                                       style="background: rgba(59, 130, 246, 0.15); color: #60a5fa;"))
+            
+            if task_type == 'gtd-task':
+                meta_items.append(Span("GTD", cls="kanban-card-tag",
+                                       style="background: rgba(16, 185, 129, 0.15); color: #34d399;"))
+            
+            task_cards.append(
+                Div(
+                    P(task['title'], cls="kanban-card-title"),
+                    Div(*meta_items, cls="kanban-card-meta"),
+                    cls="kanban-card",
+                    draggable="true",
+                    data_task_id=task['id']
+                )
+            )
+        
+        kanban_columns.append(
+            Div(
+                Div(
+                    Span(col_title, cls="kanban-column-title"),
+                    Span(str(len(tasks)), cls="kanban-column-count"),
+                    cls="kanban-column-header"
+                ),
+                Div(*task_cards, cls="kanban-tasks", data_column=col_id),
+                cls=f"kanban-column {col_class}",
+                data_column=col_id
+            )
+        )
+    
+    content = Div(
+        Div(
+            Div(
+                H2("🗂️ Agent Kanban Board", cls="text-xl font-bold"),
+                P("Drag cards between columns to update status. Pulls from WORKING.md and GTD.", 
+                  cls="text-sm", style="color: var(--text-muted);"),
+                cls="mb-4"
+            ),
+            Div(*kanban_columns, cls="kanban-board"),
+            cls="glass p-6"
+        )
+    )
+    
+    return layout("Kanban Board", content, "kanban", request)
 
 @rt('/view')
 def view_doc(request: Request, path: str = ""):

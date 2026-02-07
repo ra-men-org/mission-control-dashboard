@@ -6,7 +6,10 @@ FastAPI + FastHTML dashboard for OpenClaw. Local-only, Tailscale-accessible.
 
 1. **📊 Activity Feed** — Real-time log of every OpenClaw action
 2. **📅 Calendar** — Scheduled tasks with weekly overview  
-3. **🔍 Global Search** — Search across memories, GTD files, and tasks
+3. **🗂️ Kanban Board** — Agent task board with columns (Todo, In Progress, Review, Done, Blocked)
+4. **🧠 Memories** — AI memory system browser with search and approval
+5. **🔍 Global Search** — Search across memories, GTD files, and tasks
+6. **📈 Stats** — System overview with counts
 
 ## Quick Start
 
